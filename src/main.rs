@@ -1,11 +1,38 @@
 extern crate clap;
 extern crate image;
 extern crate rayon;
+use indicatif::{ProgressBar, ProgressStyle};
+
 use rayon::prelude::*;
 
 mod cmap;
 
-fn mandelbrot(
+#[inline(always)]
+pub fn lerp<T: Lerp>(a: &T, b: &T, t: &T::Scalar) -> T {
+    a.lerp(b, t)
+}
+
+pub trait Lerp {
+    type Scalar;
+    fn lerp(&self, other: &Self, scalar: &Self::Scalar) -> Self;
+}
+
+impl Lerp for f64 {
+    type Scalar = f64;
+    #[inline(always)]
+    fn lerp(&self, other: &f64, scalar: &f64) -> f64 {
+        self + (other - self) * scalar
+    }
+}
+impl Lerp for num::complex::Complex64 {
+    type Scalar = f64;
+    #[inline(always)]
+    fn lerp(&self, other: &num::complex::Complex64, scalar: &f64) -> num::complex::Complex64 {
+        self + (other - self) * scalar
+    }
+}
+
+fn mandelbrot_single(
     res: std::vec::Vec<u32>,
     center: num::complex::Complex64,
     domain: f64,
@@ -29,11 +56,71 @@ fn mandelbrot(
     } else {
         num::complex::Complex64::new(center.re - domain / 2.0, -center.im - domain / 2.0)
     };
-    let max_iter = ((res[0].max(res[1]) as f64 * 1.0) / domain).max(1000.0) as u64;
+    let max_iter = ((res[0].max(res[1]) as f64 * 1e-4) / domain).max(1000.0) as u64;
     println!("Max Iter: {}", max_iter);
     println!("LOCAL CENTER: {}", local_center);
+    let bar = ProgressBar::new(res[1] as u64);
+    bar.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green.bold} [{elapsed_precise}] [{bar:40.cyan.bold/blue}] {pos:>5}/{len:5} ({eta})")
+            .progress_chars("=>-"),
+    );
     buffer
         .par_chunks_mut(res[0] as usize * 3usize)
+        .enumerate()
+        .for_each(|(y, row)| {
+            bar.inc(1);
+            for x in 0..res[0] {
+                let mut z = num::complex::Complex64::new(0.0, 0.0);
+                let c = (scale * num::complex::Complex64::new(x as f64, y as f64)) + local_center;
+                let mut i: u64 = 0;
+                while i < max_iter && z.norm() <= 2.0 {
+                    z = z * z + c;
+                    i += 1;
+                }
+                if z.norm() >= 2.0 {
+                    i = i % 255;
+                    let color = cmap[i as usize];
+                    row[(x * 3) as usize] = ((color >> 16) & 0xff) as u8;
+                    row[(x * 3 + 1) as usize] = ((color >> 8) & 0xff) as u8;
+                    row[(x * 3 + 2) as usize] = (color & 0xff) as u8;
+                }
+            }
+        });
+    let imgbuf: image::ImageBuffer<image::Rgb<u8>, std::vec::Vec<_>> =
+        image::ImageBuffer::from_vec(res[0], res[1], buffer).unwrap();
+    bar.finish();
+    println!("Saving image to {}", file);
+    imgbuf.save(file).unwrap();
+}
+
+fn mandelbrot_multi(
+    res: std::vec::Vec<u32>,
+    center: num::complex::Complex64,
+    domain: f64,
+    cmap: std::vec::Vec<u32>,
+    file: std::string::String,
+) {
+    let imgbuf: image::ImageBuffer<image::Rgb<u8>, std::vec::Vec<_>> =
+        image::ImageBuffer::new(res[0], res[1]);
+    let mut buffer = imgbuf.into_vec();
+    let scale = domain / res[0].min(res[1]) as f64;
+    let local_center = if res[0] > res[1] {
+        num::complex::Complex64::new(
+            center.re - ((res[0] as f64) * domain / ((res[1] as f64) * 2.0)),
+            -center.im - domain / 2.0,
+        )
+    } else if res[0] < res[1] {
+        num::complex::Complex64::new(
+            center.re - domain / 2.0,
+            -center.im - ((res[1] as f64) * domain / ((res[0] as f64) * 2.0)),
+        )
+    } else {
+        num::complex::Complex64::new(center.re - domain / 2.0, -center.im - domain / 2.0)
+    };
+    let max_iter = ((res[0].max(res[1]) as f64) / domain).max(1000.0) as u64;
+    buffer
+        .chunks_mut(res[0] as usize * 3usize)
         .enumerate()
         .for_each(|(y, row)| {
             for x in 0..res[0] {
@@ -55,7 +142,6 @@ fn mandelbrot(
         });
     let imgbuf: image::ImageBuffer<image::Rgb<u8>, std::vec::Vec<_>> =
         image::ImageBuffer::from_vec(res[0], res[1], buffer).unwrap();
-    println!("Saving image to {}", file);
     imgbuf.save(file).unwrap();
 }
 
@@ -313,6 +399,7 @@ fn main() {
         animation = true;
     } else {
         domain.push(domain_str.parse::<f64>().unwrap());
+        domain.push(domain_str.parse::<f64>().unwrap());
     }
     let center_str = matches.value_of("center").unwrap();
     if center_str.contains(":") {
@@ -334,11 +421,46 @@ fn main() {
             center_str[0].parse::<f64>().unwrap(),
             center_str[1].parse::<f64>().unwrap(),
         ));
+        center.push(num::complex::Complex64::new(
+            center_str[0].parse::<f64>().unwrap(),
+            center_str[1].parse::<f64>().unwrap(),
+        ));
     }
     let frames = matches.value_of("frames").unwrap().parse::<u32>().unwrap();
-    let cmap = cmap::construct_cmaps(matches.value_of("cmap").unwrap());
     if animation {
         println!("Rendering Animation [{}]", frames);
+        let bar = ProgressBar::new(frames as u64);
+        bar.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green.bold} [{elapsed_precise}] [{bar:40.cyan.bold/blue}] {pos:>5}/{len:5} ({eta})")
+            .progress_chars("=>-"),
+        );
+        (0..frames).into_par_iter().for_each(|f| {
+            bar.inc(1);
+            let cmap = cmap::construct_cmaps(matches.value_of("cmap").unwrap());
+            match matches.value_of("fractal").unwrap() {
+                "mandelbrot" => mandelbrot_multi(
+                    vec![resx, resy],
+                    lerp(&center[0], &center[1], &(f as f64 / frames as f64)),
+                    lerp(
+                        &domain[0].ln(),
+                        &domain[1].ln(),
+                        &(f as f64 / frames as f64),
+                    )
+                    .exp(),
+                    cmap,
+                    format!(
+                        "{}/{}.{}",
+                        matches.value_of("output").unwrap(),
+                        f,
+                        matches.value_of("extension").unwrap()
+                    ),
+                ),
+                "julia" => (),
+                _ => (),
+            };
+        });
+        bar.finish();
     } else {
         println!("Rendering Image");
         println!("Centered at: {}, with diamiter of {}", center[0], domain[0]);
@@ -347,20 +469,11 @@ fn main() {
             matches.value_of("output").unwrap(),
             matches.value_of("extension").unwrap()
         );
+        let cmap = cmap::construct_cmaps(matches.value_of("cmap").unwrap());
         match matches.value_of("fractal").unwrap() {
-            "mandelbrot" => mandelbrot(vec![resx, resy], center[0], domain[0], cmap, file),
+            "mandelbrot" => mandelbrot_single(vec![resx, resy], center[0], domain[0], cmap, file),
             "julia" => julia(),
             _ => (),
         };
     }
-    // julia(
-    //     num::complex::Complex64::new(-0.4, 0.6),
-    //     resx,
-    //     resy,
-    //     format!(
-    //         "{}.{}",
-    //         matches.value_of("output").unwrap(),
-    //         matches.value_of("extension").unwrap()
-    //     ),
-    // );
 }

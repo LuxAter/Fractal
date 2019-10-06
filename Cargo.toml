@@ -11,3 +11,4 @@ image = '*'
 num = "*"
 rayon = "*"
 clap = "*"
+indicatif = {version="*", features=["with_rayon"]}
