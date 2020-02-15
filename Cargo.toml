@@ -9,6 +9,7 @@ edition = "2018"
 [dependencies]
 image = '*'
 num = "*"
+rug = "*"
 rayon = "*"
 clap = "*"
 indicatif = {version="*", features=["with_rayon"]}

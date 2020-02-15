@@ -24,17 +24,17 @@ impl Lerp for f64 {
         self + (other - self) * scalar
     }
 }
-impl Lerp for num::complex::Complex64 {
-    type Scalar = f64;
+impl Lerp for rug::Complex {
+    type Scalar = rug::Float;
     #[inline(always)]
-    fn lerp(&self, other: &num::complex::Complex64, scalar: &f64) -> num::complex::Complex64 {
-        self + (other - self) * scalar
+    fn lerp(&self, other: &rug::Complex, scalar: &rug::Float) -> rug::Complex {
+        self + (other - self);
     }
 }
 
 fn mandelbrot_single(
     res: std::vec::Vec<u32>,
-    center: num::complex::Complex64,
+    center: rug::Complex,
     domain: f64,
     cmap: std::vec::Vec<u32>,
     file: std::string::String,
@@ -44,17 +44,26 @@ fn mandelbrot_single(
     let mut buffer = imgbuf.into_vec();
     let scale = domain / res[0].min(res[1]) as f64;
     let local_center = if res[0] > res[1] {
-        num::complex::Complex64::new(
-            center.re - ((res[0] as f64) * domain / ((res[1] as f64) * 2.0)),
-            -center.im - domain / 2.0,
+        rug::Complex::with_val(
+            128,
+            (
+                center.real() - ((res[0] as f64) * domain / ((res[1] as f64) * 2.0)),
+                -center.imag() - domain / 2.0,
+            ),
         )
     } else if res[0] < res[1] {
-        num::complex::Complex64::new(
-            center.re - domain / 2.0,
-            -center.im - ((res[1] as f64) * domain / ((res[0] as f64) * 2.0)),
+        rug::Complex::with_val(
+            128,
+            (
+                center.real() - domain / 2.0,
+                -center.imag() - ((res[1] as f64) * domain / ((res[0] as f64) * 2.0)),
+            ),
         )
     } else {
-        num::complex::Complex64::new(center.re - domain / 2.0, -center.im - domain / 2.0)
+        rug::Complex::with_val(
+            128,
+            (center.real() - domain / 2.0, -center.imag() - domain / 2.0),
+        )
     };
     let max_iter = ((res[0].max(res[1]) as f64 * 1e-4) / domain).max(1000.0) as u64;
     println!("Max Iter: {}", max_iter);
@@ -118,7 +127,8 @@ fn mandelbrot_multi(
     } else {
         num::complex::Complex64::new(center.re - domain / 2.0, -center.im - domain / 2.0)
     };
-    let max_iter = ((res[0].max(res[1]) as f64 * 1e-7) / domain).max(1000.0) as u64;
+    // let max_iter = ((res[0].max(res[1]) as f64 * 1e-5) / domain).max(1000.0) as u64;
+    let max_iter = 1e6 as u64;
     buffer
         .chunks_mut(res[0] as usize * 3usize)
         .enumerate()
