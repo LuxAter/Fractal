@@ -127,8 +127,8 @@ fn mandelbrot_multi(
     } else {
         num::complex::Complex64::new(center.re - domain / 2.0, -center.im - domain / 2.0)
     };
-    // let max_iter = ((res[0].max(res[1]) as f64 * 1e-5) / domain).max(1000.0) as u64;
-    let max_iter = 1e6 as u64;
+    let max_iter = ((res[0].max(res[1]) as f64 * 1e-5) / domain).max(1000000.0) as u64;
+    let mut actual_max_iter = 0;
     buffer
         .chunks_mut(res[0] as usize * 3usize)
         .enumerate()
@@ -142,6 +142,7 @@ fn mandelbrot_multi(
                     i += 1;
                 }
                 if z.norm() >= 2.0 {
+                    actual_max_iter = actual_max_iter.max(i);
                     i = i % 255;
                     let color = cmap[i as usize];
                     row[(x * 3) as usize] = ((color >> 16) & 0xff) as u8;
@@ -150,6 +151,13 @@ fn mandelbrot_multi(
                 }
             }
         });
+    println!(
+        "{},{} -> {}/{}",
+        domain,
+        res[0].max(res[1]),
+        actual_max_iter,
+        max_iter
+    );
     let imgbuf: image::ImageBuffer<image::Rgb<u8>, std::vec::Vec<_>> =
         image::ImageBuffer::from_vec(res[0], res[1], buffer).unwrap();
     imgbuf.save(file).unwrap();
@@ -440,12 +448,12 @@ fn main() {
     if animation {
         println!("Rendering Animation [{}]", frames);
         let bar = ProgressBar::new(frames as u64);
-        bar.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green.bold} [{elapsed_precise}] [{bar:40.cyan.bold/blue}] {pos:>5}/{len:5} ({eta})")
-            .progress_chars("=>-"),
-        );
-        bar.inc(0);
+        // bar.set_style(
+        // ProgressStyle::default_bar()
+        //     .template("{spinner:.green.bold} [{elapsed_precise}] [{bar:40.cyan.bold/blue}] {pos:>5}/{len:5} ({eta})")
+        //     .progress_chars("=>-"),
+        // );
+        // bar.inc(0);
         (0..frames).into_par_iter().for_each(|f| {
             let cmap = cmap::construct_cmaps(matches.value_of("cmap").unwrap());
             match matches.value_of("fractal").unwrap() {
@@ -469,9 +477,9 @@ fn main() {
                 "julia" => (),
                 _ => (),
             };
-            bar.inc(1);
+            // bar.inc(1);
         });
-        bar.finish();
+    // bar.finish();
     } else {
         println!("Rendering Image");
         println!("Centered at: {}, with diamiter of {}", center[0], domain[0]);
